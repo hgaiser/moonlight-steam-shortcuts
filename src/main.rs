@@ -17,10 +17,6 @@ struct Args {
 	#[clap(short, long)]
 	steam_userdata: Option<PathBuf>,
 
-	/// The used Moonlight is installed through Flatpak.
-	#[clap(short, long)]
-	flatpak: bool,
-
 	/// Don't remove existing games tagged as "moonlight".
 	#[clap(long = "no-sync", action = ArgAction::SetFalse)]
 	sync: bool,
