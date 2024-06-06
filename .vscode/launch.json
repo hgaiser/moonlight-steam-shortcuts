@@ -1,0 +1,46 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'moonlight-steam-shortcuts'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=moonlight-steam-shortcuts",
+                    "--package=moonlight-steam-shortcuts"
+                ],
+                "filter": {
+                    "name": "moonlight-steam-shortcuts",
+                    "kind": "bin"
+                }
+            },
+            "console": "integratedTerminal",
+            "args": ["10.0.5.2", "<", "moonlight list 10.0.5.2 --csv"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'moonlight-steam-shortcuts'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=moonlight-steam-shortcuts",
+                    "--package=moonlight-steam-shortcuts"
+                ],
+                "filter": {
+                    "name": "moonlight-steam-shortcuts",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
