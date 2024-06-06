@@ -1,0 +1,9 @@
+#!/bin/sh
+
+mkdir -p "$HOME/.local/bin"
+
+curl -sLo "$HOME/.local/bin/moonlight-flatpak" "https://raw.githubusercontent.com/hgaiser/moonlight-steam-shortcuts/main/scripts/moonlight-flatpak"
+curl -sLo "$HOME/.local/bin/moonlight-steam-shortcuts" "https://github.com/hgaiser/moonlight-steam-shortcuts/releases/latest/download/moonlight-steam-shortcuts"
+chmod +x "$HOME/.local/bin/moonlight-steam-shortcuts"
+
+exec "$HOME/.local/bin/moonlight-steam-shortcuts" "$1" --moonlight "$HOME/.local/bin/moonlight-flatpak"
