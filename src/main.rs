@@ -122,7 +122,7 @@ fn cmd_sync(
 				.collect::<Vec<_>>()
 				.join(", ")
 		);
-		known.into_iter().map(|h| h.address).collect()
+		known.into_iter().map(|h| h.name).collect()
 	} else {
 		hosts.to_vec()
 	};
