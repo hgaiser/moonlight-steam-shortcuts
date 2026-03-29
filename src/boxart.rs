@@ -25,8 +25,8 @@ pub fn apply_overlay(boxart: &DynamicImage) -> Result<Vec<u8>, String> {
 	let resized_logo = logo.resize(logo_size, logo_size, imageops::FilterType::Lanczos3);
 	let (lw, lh) = resized_logo.dimensions();
 
-	let margin_x = (bw as f32 * 0.03) as u32;
-	let margin_y = (bh as f32 * 0.03) as u32;
+	let margin_x = (bw as f32 * 0.05) as u32;
+	let margin_y = (bh as f32 * 0.05) as u32;
 	let x = bw.saturating_sub(lw + margin_x);
 	let y = bh.saturating_sub(lh + margin_y);
 
