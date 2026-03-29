@@ -115,7 +115,9 @@ pub fn list_apps(backend: &MoonlightBackend, host: &str) -> Result<Vec<Moonlight
 		}
 
 		let name = record[0].to_string();
-		let id: u32 = record[1].parse().map_err(|e| format!("Invalid app ID '{}': {e}", &record[1]))?;
+		let id: u32 = record[1]
+			.parse()
+			.map_err(|e| format!("Invalid app ID '{}': {e}", &record[1]))?;
 		let hidden: bool = record[4].parse().unwrap_or(false);
 		let is_app_collector: bool = record[3].parse().unwrap_or(false);
 
@@ -172,17 +174,17 @@ pub fn known_hosts(backend: &MoonlightBackend) -> Vec<KnownHost> {
 }
 
 fn standard_config_path() -> Option<PathBuf> {
-	xdg::BaseDirectories::new()
-		.ok()
-		.map(|dirs| dirs.get_config_home().join("Moonlight Game Streaming Project/Moonlight.conf"))
+	xdg::BaseDirectories::new().ok().map(|dirs| {
+		dirs.get_config_home()
+			.join("Moonlight Game Streaming Project/Moonlight.conf")
+	})
 }
 
 fn flatpak_config_path() -> Option<PathBuf> {
-	std::env::var_os("HOME")
-		.map(|home| {
-			PathBuf::from(home)
-				.join(".var/app/com.moonlight_stream.Moonlight/config/Moonlight Game Streaming Project/Moonlight.conf")
-		})
+	std::env::var_os("HOME").map(|home| {
+		PathBuf::from(home)
+			.join(".var/app/com.moonlight_stream.Moonlight/config/Moonlight Game Streaming Project/Moonlight.conf")
+	})
 }
 
 /// Parse Moonlight's QSettings INI config to extract known hosts.
@@ -234,7 +236,10 @@ fn parse_moonlight_config(path: &Path) -> Result<Vec<KnownHost>, String> {
 			.or_else(|| data.get("remoteaddress").filter(|a| !a.is_empty()));
 
 		if let Some(addr) = address {
-			hosts.push(KnownHost { name: name.clone(), address: addr.clone() });
+			hosts.push(KnownHost {
+				name: name.clone(),
+				address: addr.clone(),
+			});
 		}
 	}
 

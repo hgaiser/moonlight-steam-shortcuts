@@ -3,8 +3,8 @@ mod moonlight;
 mod steam;
 
 use clap::{Parser, Subcommand};
-use steam_shortcuts_util::Shortcut;
 use std::{path::PathBuf, process::Command};
+use steam_shortcuts_util::Shortcut;
 
 #[derive(Parser)]
 #[clap(version)]
@@ -72,14 +72,28 @@ fn main() -> Result<(), String> {
 	let backend = moonlight::resolve_backend(cli.moonlight.as_deref(), cli.flatpak)?;
 
 	match cli.command {
-		Commands::Sync { hosts, dry_run, no_overlay } => {
-			cmd_sync(&backend, &hosts, cli.steam_userdata.as_deref(), dry_run, no_overlay, cli.verbose)
-		},
+		Commands::Sync {
+			hosts,
+			dry_run,
+			no_overlay,
+		} => cmd_sync(
+			&backend,
+			&hosts,
+			cli.steam_userdata.as_deref(),
+			dry_run,
+			no_overlay,
+			cli.verbose,
+		),
 		Commands::Remove { dry_run } => cmd_remove(cli.steam_userdata.as_deref(), dry_run, cli.verbose),
 		Commands::List => cmd_list(cli.steam_userdata.as_deref()),
-		Commands::Launch { host, app, no_sync } => {
-			cmd_launch(&backend, &host, &app, no_sync, cli.steam_userdata.as_deref(), cli.verbose)
-		},
+		Commands::Launch { host, app, no_sync } => cmd_launch(
+			&backend,
+			&host,
+			&app,
+			no_sync,
+			cli.steam_userdata.as_deref(),
+			cli.verbose,
+		),
 	}
 }
 
@@ -95,16 +109,18 @@ fn cmd_sync(
 	let hosts: Vec<String> = if hosts.is_empty() {
 		let known = moonlight::known_hosts(backend);
 		if known.is_empty() {
-			return Err(
-				"No hosts specified and no known hosts found in Moonlight config. \
+			return Err("No hosts specified and no known hosts found in Moonlight config. \
 				 Provide host addresses as arguments or pair with a host in Moonlight first."
-					.to_string(),
-			);
+				.to_string());
 		}
 		println!(
 			"Auto-detected {} known host(s): {}",
 			known.len(),
-			known.iter().map(|h| format!("{} ({})", h.name, h.address)).collect::<Vec<_>>().join(", ")
+			known
+				.iter()
+				.map(|h| format!("{} ({})", h.name, h.address))
+				.collect::<Vec<_>>()
+				.join(", ")
 		);
 		known.into_iter().map(|h| h.address).collect()
 	} else {
@@ -206,23 +222,26 @@ fn cmd_sync(
 	}
 
 	if dry_run {
-		println!("Dry run: would write {} shortcuts ({} moonlight).", non_moonlight.len() + new_shortcuts.len(), new_shortcuts.len());
+		println!(
+			"Dry run: would write {} shortcuts ({} moonlight).",
+			non_moonlight.len() + new_shortcuts.len(),
+			new_shortcuts.len()
+		);
 	} else {
 		let mut final_shortcuts = non_moonlight;
 		final_shortcuts.extend(new_shortcuts);
 		steam::save_shortcuts(&user_dir, &final_shortcuts)?;
-		let ml_count = final_shortcuts.iter().filter(|s| s.tags.contains(&"moonlight".to_string())).count();
+		let ml_count = final_shortcuts
+			.iter()
+			.filter(|s| s.tags.contains(&"moonlight".to_string()))
+			.count();
 		println!("Saved {} shortcuts ({} moonlight).", final_shortcuts.len(), ml_count);
 	}
 
 	Ok(())
 }
 
-fn cmd_remove(
-	steam_userdata: Option<&std::path::Path>,
-	dry_run: bool,
-	verbose: bool,
-) -> Result<(), String> {
+fn cmd_remove(steam_userdata: Option<&std::path::Path>, dry_run: bool, verbose: bool) -> Result<(), String> {
 	let user_dir = steam::find_user_dir(steam_userdata)?;
 	let existing = steam::load_shortcuts(&user_dir)?;
 	let moonlight = steam::moonlight_shortcuts(&existing);

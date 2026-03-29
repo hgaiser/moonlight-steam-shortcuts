@@ -1,6 +1,6 @@
 use dialoguer::{theme::ColorfulTheme, Select};
-use steam_shortcuts_util::{parse_shortcuts, shortcut::ShortcutOwned, shortcuts_to_bytes};
 use std::path::{Path, PathBuf};
+use steam_shortcuts_util::{parse_shortcuts, shortcut::ShortcutOwned, shortcuts_to_bytes};
 
 /// Resolved Steam user directory.
 pub struct SteamUserDir {
@@ -20,9 +20,7 @@ pub fn find_user_dir(steam_userdata: Option<&Path>) -> Result<SteamUserDir, Stri
 		},
 		None => {
 			let userdata_dir = xdg::BaseDirectories::new()
-				.map_err(|_| {
-					"Failed to find Steam userdata directory. Provide --steam-userdata.".to_string()
-				})?
+				.map_err(|_| "Failed to find Steam userdata directory. Provide --steam-userdata.".to_string())?
 				.get_data_home()
 				.join("Steam/userdata");
 			choose_user_dir(userdata_dir)?
@@ -87,7 +85,10 @@ pub fn remove_grid_images(user_dir: &SteamUserDir, app_id: u32) -> Result<(), St
 
 /// Filter shortcuts to only those tagged "moonlight".
 pub fn moonlight_shortcuts(shortcuts: &[ShortcutOwned]) -> Vec<&ShortcutOwned> {
-	shortcuts.iter().filter(|s| s.tags.contains(&"moonlight".to_string())).collect()
+	shortcuts
+		.iter()
+		.filter(|s| s.tags.contains(&"moonlight".to_string()))
+		.collect()
 }
 
 /// Check if a directory looks like the userdata root (contains numeric subdirectories).
