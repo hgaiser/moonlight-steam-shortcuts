@@ -219,7 +219,7 @@ fn parse_moonlight_config(path: &Path) -> Result<Vec<KnownHost>, String> {
 
 	let mut hosts: Vec<KnownHost> = Vec::new();
 	let mut indices: Vec<String> = hosts_data.keys().cloned().collect();
-	indices.sort_by(|a, b| a.parse::<u32>().unwrap_or(0).cmp(&b.parse::<u32>().unwrap_or(0)));
+	indices.sort_by_key(|a| a.parse::<u32>().unwrap_or(0));
 
 	for index in indices {
 		let data = &hosts_data[&index];

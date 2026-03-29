@@ -282,7 +282,7 @@ fn cmd_list(steam_userdata: Option<&std::path::Path>) -> Result<(), String> {
 		return Ok(());
 	}
 
-	println!("{:<40} {:>10}  {}", "Name", "App ID", "Launch Options");
+	println!("{:<40} {:>10}  Launch Options", "Name", "App ID");
 	println!("{}", "-".repeat(80));
 	for s in &moonlight {
 		println!("{:<40} {:>10}  {}", s.app_name, s.app_id, s.launch_options);
