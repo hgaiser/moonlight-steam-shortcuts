@@ -18,7 +18,7 @@ pub enum MoonlightBackend {
 #[allow(dead_code)]
 pub struct MoonlightApp {
 	pub name: String,
-	pub id: u32,
+	pub id: i32,
 	/// Local file path to the boxart, or None if no boxart is available.
 	pub boxart_path: Option<PathBuf>,
 }
@@ -115,7 +115,7 @@ pub fn list_apps(backend: &MoonlightBackend, host: &str) -> Result<Vec<Moonlight
 		}
 
 		let name = record[0].to_string();
-		let id: u32 = record[1]
+		let id: i32 = record[1]
 			.parse()
 			.map_err(|e| format!("Invalid app ID '{}': {e}", &record[1]))?;
 		let hidden: bool = record[4].parse().unwrap_or(false);
