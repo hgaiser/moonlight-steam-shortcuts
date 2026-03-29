@@ -1,201 +1,350 @@
-use clap::{ArgAction, Parser};
-use dialoguer::{theme::ColorfulTheme, Select};
-use steam_shortcuts_util::{parse_shortcuts, shortcut::ShortcutOwned, shortcuts_to_bytes, Shortcut};
-use std::{io::Cursor, path::PathBuf, process::Command};
+mod boxart;
+mod moonlight;
+mod steam;
 
-#[derive(Parser, Debug)]
+use clap::{Parser, Subcommand};
+use steam_shortcuts_util::Shortcut;
+use std::{path::PathBuf, process::Command};
+
+#[derive(Parser)]
 #[clap(version)]
-struct Args {
-	/// Host to retrieve apps from.
-	host: String,
-
+struct Cli {
 	/// Path to the Moonlight executable.
-	#[clap(short, long)]
+	#[clap(short, long, global = true)]
 	moonlight: Option<PathBuf>,
 
-	/// Path to the userdata directory of Steam.
-	#[clap(short, long)]
+	/// Path to the Steam userdata directory.
+	#[clap(short, long, global = true)]
 	steam_userdata: Option<PathBuf>,
 
-	/// Don't remove existing games tagged as "moonlight".
-	#[clap(long = "no-sync", action = ArgAction::SetFalse)]
-	sync: bool,
+	/// Use Flatpak Moonlight (com.moonlight_stream.Moonlight).
+	#[clap(long, global = true)]
+	flatpak: bool,
 
-	/// Don't override the shortcuts file, just print the Moonlight apps that were found.
-	#[clap(long)]
-	dry_run: bool,
+	/// Enable verbose output.
+	#[clap(short, long, global = true)]
+	verbose: bool,
+
+	#[command(subcommand)]
+	command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+	/// Sync Moonlight apps to Steam shortcuts (add new, remove stale).
+	Sync {
+		/// Moonlight host addresses to sync. If omitted, all known hosts from
+		/// Moonlight's config are used.
+		hosts: Vec<String>,
+
+		/// Show what would change without modifying anything.
+		#[clap(long)]
+		dry_run: bool,
+
+		/// Skip adding the Moonlight logo overlay to boxart.
+		#[clap(long)]
+		no_overlay: bool,
+	},
+	/// Remove all Moonlight-managed shortcuts and grid images.
+	Remove {
+		/// Show what would be removed without modifying anything.
+		#[clap(long)]
+		dry_run: bool,
+	},
+	/// List currently managed Moonlight shortcuts in Steam.
+	List,
+	/// Launch a game via Moonlight, triggering a background sync first.
+	Launch {
+		/// Moonlight host address.
+		host: String,
+
+		/// Application name to launch.
+		app: String,
+
+		/// Skip the background sync before launching.
+		#[clap(long)]
+		no_sync: bool,
+	},
 }
 
 fn main() -> Result<(), String> {
-	let args = Args::parse();
+	let cli = Cli::parse();
+	let backend = moonlight::resolve_backend(cli.moonlight.as_deref(), cli.flatpak)?;
 
-	let moonlight_path = match args.moonlight {
-		Some(path) => path.canonicalize().map_err(|e| format!("Failed to find absolute path of moonlight ('{}'): {e}", path.display()))?,
-		None => {
-			which::which("moonlight")
-				.map_err(|_| "Failed to find Moonlight executable. Make sure it is in your PATH environment variable.".to_string())?
+	match cli.command {
+		Commands::Sync { hosts, dry_run, no_overlay } => {
+			cmd_sync(&backend, &hosts, cli.steam_userdata.as_deref(), dry_run, no_overlay, cli.verbose)
 		},
-	};
-
-	if !moonlight_path.exists() || !moonlight_path.is_file() {
-		return Err(format!("Moonlight at '{:?}' does not exist or is not a file.", moonlight_path));
+		Commands::Remove { dry_run } => cmd_remove(cli.steam_userdata.as_deref(), dry_run, cli.verbose),
+		Commands::List => cmd_list(cli.steam_userdata.as_deref()),
+		Commands::Launch { host, app, no_sync } => {
+			cmd_launch(&backend, &host, &app, no_sync, cli.steam_userdata.as_deref(), cli.verbose)
+		},
 	}
+}
 
-	println!("Found Moonlight at '{moonlight_path:?}'.");
-
-	let userdata_dir = match args.steam_userdata {
-		Some(path) => {
-			if path.ends_with("userdata") {
-				// Assume we got the `userdata` directory.
-				choose_user_dir(path)?
-			} else {
-				// Assume we got the full user directory.
-				path
-			}
-		},
-		None => {
-			let steam_users_dir = xdg::BaseDirectories::new()
-				.map_err(|_| "Failed to retrieve Steam userdata directory. Please provide a directory using --steam-userdata <steam_dir>.".to_string())?
-				.get_data_home().join("Steam/userdata");
-
-			choose_user_dir(steam_users_dir)?
-		},
-	};
-
-	let shortcuts_path = userdata_dir.join("config/shortcuts.vdf");
-
-	let mut shortcuts = if !shortcuts_path.exists() {
-		println!("Creating shortcuts file at {}.", shortcuts_path.display());
-		Vec::new()
+fn cmd_sync(
+	backend: &moonlight::MoonlightBackend,
+	hosts: &[String],
+	steam_userdata: Option<&std::path::Path>,
+	dry_run: bool,
+	no_overlay: bool,
+	verbose: bool,
+) -> Result<(), String> {
+	// If no hosts specified, auto-discover from Moonlight's config.
+	let hosts: Vec<String> = if hosts.is_empty() {
+		let known = moonlight::known_hosts(backend);
+		if known.is_empty() {
+			return Err(
+				"No hosts specified and no known hosts found in Moonlight config. \
+				 Provide host addresses as arguments or pair with a host in Moonlight first."
+					.to_string(),
+			);
+		}
+		println!(
+			"Auto-detected {} known host(s): {}",
+			known.len(),
+			known.iter().map(|h| format!("{} ({})", h.name, h.address)).collect::<Vec<_>>().join(", ")
+		);
+		known.into_iter().map(|h| h.address).collect()
 	} else {
-		let shortcuts_file = std::fs::read(&shortcuts_path)
-			.map_err(|e| format!("Failed to read existing shortcuts file: {e}"))?;
-		parse_shortcuts(&shortcuts_file)
-			.map_err(|e| format!("Failed to parse shortcuts: {e}"))?
-			.into_iter()
-			.map(|s| s.to_owned())
-			.collect()
+		hosts.to_vec()
 	};
 
-	if args.sync {
-		// Remove all games that are "moonlight" games.
-		shortcuts.retain(|s| !s.tags.contains(&"moonlight".to_string()));
-	}
+	let user_dir = steam::find_user_dir(steam_userdata)?;
+	let existing = steam::load_shortcuts(&user_dir)?;
 
-	println!("Retrieving apps from Moonlight ...");
-	let moonlight_apps = Command::new(&moonlight_path)
-		.args([
-			"list",
-			&args.host,
-			"--csv"
-		])
-		.output()
-		.map_err(|e| format!("Failed to request apps from moonlight: {e}"))?;
-	println!("Finished retrieving apps from Moonlight.");
+	let non_moonlight: Vec<_> = existing
+		.iter()
+		.filter(|s| !s.tags.contains(&"moonlight".to_string()))
+		.cloned()
+		.collect();
+	let moonlight_existing: Vec<_> = existing
+		.iter()
+		.filter(|s| s.tags.contains(&"moonlight".to_string()))
+		.cloned()
+		.collect();
 
-	if !moonlight_apps.status.success() {
-		println!("Output from Moonlight: {moonlight_apps:?}");
-		return Err("Failed to get apps from Moonlight.".to_string());
-	}
-
-	let cursor = Cursor::new(moonlight_apps.stdout);
-	let mut reader = csv::Reader::from_reader(cursor);
-
-	let mut new_shortcuts = Vec::new();
-	for record in reader.records() {
-		match record {
-			Ok(record) => {
-				if record.len() != 7 {
-					return Err(format!("Expected exactly 7 entries in record, but got {}: {:?}", record.len(), record));
+	// Collect desired apps from all hosts.
+	let mut desired: Vec<(String, moonlight::MoonlightApp)> = Vec::new();
+	for host in &hosts {
+		println!("Retrieving apps from '{host}' ...");
+		match moonlight::list_apps(backend, host) {
+			Ok(apps) => {
+				println!("Found {} apps on '{host}'.", apps.len());
+				for app in apps {
+					desired.push((host.clone(), app));
 				}
-
-				let title = &record[0];
-				let launch_options = format!("stream {} \"{title}\"", args.host);
-
-				let icon = if record[6].contains("no_app_image") { "" } else { record[6].strip_prefix("file://").unwrap() };
-				let mut shortcut = Shortcut::new(
-					"",
-					title,
-					&moonlight_path.to_string_lossy(),
-					"",
-					icon,
-					"",
-					&launch_options,
-				).to_owned();
-				shortcut.tags.push("moonlight".to_string());
-
-				println!("{title} => '{} {launch_options}' (icon: '{icon}')", moonlight_path.display());
-				new_shortcuts.push(shortcut);
 			},
 			Err(e) => {
-				return Err(format!("Failed to parse CSV from Moonlight: {e}"));
+				eprintln!("Warning: failed to list apps from '{host}': {e}");
 			},
 		}
 	}
 
-	if !args.dry_run {
-		shortcuts.extend(new_shortcuts);
-		let serialized = shortcuts_to_bytes(&shortcuts.iter().map(ShortcutOwned::borrow).collect());
-		println!("Shortcuts file: {shortcuts_path:?}");
-		std::fs::write(&shortcuts_path, serialized)
-			.map_err(|e| format!("Failed to write shortcuts to file: {e}"))?;
+	// Determine the exe path (our own binary).
+	let self_path = std::env::current_exe()
+		.map_err(|e| format!("Failed to determine own executable path: {e}"))?
+		.to_string_lossy()
+		.to_string();
+
+	// Build set of desired launch_options for identity matching.
+	let desired_launch_opts: std::collections::HashSet<String> = desired
+		.iter()
+		.map(|(host, app)| build_launch_options(backend, steam_userdata, host, &app.name))
+		.collect();
+
+	// Find stale moonlight shortcuts (not in desired set).
+	let stale: Vec<_> = moonlight_existing
+		.iter()
+		.filter(|s| !desired_launch_opts.contains(&s.launch_options))
+		.collect();
+
+	if !stale.is_empty() {
+		println!("Removing {} stale shortcuts.", stale.len());
+		for s in &stale {
+			if verbose {
+				println!("  - {}", s.app_name);
+			}
+			if !dry_run {
+				steam::remove_grid_images(&user_dir, s.app_id)?;
+			}
+		}
+	}
+
+	// Build new shortcut list.
+	let mut new_shortcuts = Vec::new();
+	for (host, app) in &desired {
+		let launch_options = build_launch_options(backend, steam_userdata, host, &app.name);
+
+		// Check if shortcut already exists.
+		let existing_shortcut = moonlight_existing.iter().find(|s| s.launch_options == launch_options);
+
+		let shortcut = if let Some(existing) = existing_shortcut {
+			existing.clone()
+		} else {
+			let mut s = Shortcut::new("", &app.name, &self_path, "", "", "", &launch_options).to_owned();
+			s.tags.push("moonlight".to_string());
+			if verbose {
+				println!("  + {} (host: {host})", app.name);
+			}
+			s
+		};
+
+		// Install grid image (boxart may have changed).
+		if !dry_run {
+			match boxart::process_boxart(app.boxart_path.as_deref(), no_overlay) {
+				Ok(Some(data)) => {
+					steam::install_grid_image(&user_dir, shortcut.app_id, &data)?;
+				},
+				Ok(None) => {},
+				Err(e) => eprintln!("Warning: boxart processing failed for '{}': {e}", app.name),
+			}
+		}
+
+		new_shortcuts.push(shortcut);
+	}
+
+	if dry_run {
+		println!("Dry run: would write {} shortcuts ({} moonlight).", non_moonlight.len() + new_shortcuts.len(), new_shortcuts.len());
+	} else {
+		let mut final_shortcuts = non_moonlight;
+		final_shortcuts.extend(new_shortcuts);
+		steam::save_shortcuts(&user_dir, &final_shortcuts)?;
+		let ml_count = final_shortcuts.iter().filter(|s| s.tags.contains(&"moonlight".to_string())).count();
+		println!("Saved {} shortcuts ({} moonlight).", final_shortcuts.len(), ml_count);
 	}
 
 	Ok(())
 }
 
-fn choose_user_dir(steam_users_dir: PathBuf) -> Result<PathBuf, String> {
-	let user_dirs: Vec<PathBuf> = std::fs::read_dir(steam_users_dir)
-		.map_err(|e| format!("Failed to read Steam user dir: {e}"))?
-		.filter_map(Result::ok)
-		.map(|d| d.path())
-		.filter(|d| d.is_dir())
-		.collect();
+fn cmd_remove(
+	steam_userdata: Option<&std::path::Path>,
+	dry_run: bool,
+	verbose: bool,
+) -> Result<(), String> {
+	let user_dir = steam::find_user_dir(steam_userdata)?;
+	let existing = steam::load_shortcuts(&user_dir)?;
+	let moonlight = steam::moonlight_shortcuts(&existing);
 
-	if user_dirs.len() == 1 {
-		return Ok(user_dirs[0].clone());
+	if moonlight.is_empty() {
+		println!("No Moonlight shortcuts to remove.");
+		return Ok(());
 	}
 
-	let usernames = user_dirs_to_usernames(&user_dirs);
+	println!("Removing {} Moonlight shortcuts.", moonlight.len());
+	for s in &moonlight {
+		if verbose {
+			println!("  - {}", s.app_name);
+		}
+		if !dry_run {
+			steam::remove_grid_images(&user_dir, s.app_id)?;
+		}
+	}
 
-	let options = user_dirs.iter().zip(usernames);
+	if !dry_run {
+		let remaining: Vec<_> = existing
+			.into_iter()
+			.filter(|s| !s.tags.contains(&"moonlight".to_string()))
+			.collect();
+		steam::save_shortcuts(&user_dir, &remaining)?;
+	}
 
-	let selection = Select::with_theme(&ColorfulTheme::default())
-		.with_prompt("Pick your userdir (or run using --steam-userdata):")
-		.default(0)
-		.items(&options.map(|(dir, name)| format!("{} ({})", dir.display(), name)).collect::<Vec<String>>())
-		.interact()
-		.map_err(|e| format!("Failed to select userdir: {e}"))?;
-
-	Ok(user_dirs[selection].clone())
+	Ok(())
 }
 
-fn user_dirs_to_usernames(userdirs: &[PathBuf]) -> Vec<String> {
-	let mut usernames = Vec::new();
+fn cmd_list(steam_userdata: Option<&std::path::Path>) -> Result<(), String> {
+	let user_dir = steam::find_user_dir(steam_userdata)?;
+	let existing = steam::load_shortcuts(&user_dir)?;
+	let moonlight = steam::moonlight_shortcuts(&existing);
 
-	for userdir in userdirs {
-		let localconf = userdir.join("config/localconfig.vdf");
-		let lines: Vec<String> = match std::fs::read_to_string(localconf) {
-			Ok(s) => s.lines().filter(|l| l.contains("PersonaName")).map(String::from).collect(),
-			Err(_) => {
-				usernames.push("UNKNOWN".to_string());
-				continue;
+	if moonlight.is_empty() {
+		println!("No Moonlight shortcuts found.");
+		return Ok(());
+	}
+
+	println!("{:<40} {:>10}  {}", "Name", "App ID", "Launch Options");
+	println!("{}", "-".repeat(80));
+	for s in &moonlight {
+		println!("{:<40} {:>10}  {}", s.app_name, s.app_id, s.launch_options);
+	}
+
+	Ok(())
+}
+
+fn cmd_launch(
+	backend: &moonlight::MoonlightBackend,
+	host: &str,
+	app: &str,
+	no_sync: bool,
+	steam_userdata: Option<&std::path::Path>,
+	verbose: bool,
+) -> Result<(), String> {
+	// Fork a background sync if enabled.
+	if !no_sync {
+		match libc_fork() {
+			ForkResult::Child => {
+				// Child process: run sync silently, then exit.
+				let hosts = vec![host.to_string()];
+				let _ = cmd_sync(backend, &hosts, steam_userdata, false, false, verbose);
+				std::process::exit(0);
 			},
-		};
-
-		if lines.len() != 1 {
-			usernames.push("UNKNOWN".to_string());
-			continue;
-		}
-
-		match lines[0].trim().split('"').nth(3) {
-			Some(name) => usernames.push(name.to_string()),
-			None => {
-				usernames.push("UNKNOWN".to_string());
-				continue;
-			}
+			ForkResult::Parent => {
+				// Parent continues to launch the game.
+			},
+			ForkResult::Error(e) => {
+				eprintln!("Warning: fork failed ({e}), skipping background sync.");
+			},
 		}
 	}
 
-	usernames
+	// Exec into moonlight stream.
+	let mut cmd = moonlight::stream_command(backend, host, app);
+	let err = exec_command(&mut cmd);
+	Err(format!("Failed to exec Moonlight: {err}"))
+}
+
+/// Build the launch_options string for a shortcut.
+fn build_launch_options(
+	backend: &moonlight::MoonlightBackend,
+	steam_userdata: Option<&std::path::Path>,
+	host: &str,
+	app_name: &str,
+) -> String {
+	let mut parts = vec!["launch".to_string()];
+	parts.push(backend.launch_flags());
+	if let Some(path) = steam_userdata {
+		parts.push(format!("-s {}", path.display()));
+	}
+	parts.push(host.to_string());
+	parts.push(format!("\"{}\"", app_name));
+	parts.join(" ")
+}
+
+enum ForkResult {
+	Child,
+	Parent,
+	Error(std::io::Error),
+}
+
+/// Fork the current process using libc.
+///
+/// # Safety
+/// This calls libc::fork() which is unsafe. We only use it to spawn a simple
+/// background sync that does not share mutable state with the parent.
+fn libc_fork() -> ForkResult {
+	// SAFETY: We call fork() at a point where only the main thread is running
+	// and the child immediately performs independent work then exits.
+	let pid = unsafe { libc::fork() };
+	match pid {
+		-1 => ForkResult::Error(std::io::Error::last_os_error()),
+		0 => ForkResult::Child,
+		_ => ForkResult::Parent,
+	}
+}
+
+/// Replace the current process with the given command (unix exec).
+fn exec_command(cmd: &mut Command) -> std::io::Error {
+	use std::os::unix::process::CommandExt;
+	cmd.exec()
 }
