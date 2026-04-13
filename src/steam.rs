@@ -67,6 +67,42 @@ pub fn install_grid_image(user_dir: &SteamUserDir, app_id: u32, image_data: &[u8
 	Ok(())
 }
 
+/// Install a wide (landscape 920x430) grid image for a shortcut.
+///
+/// Writes to `{app_id}.png` which Steam uses for the landscape grid view.
+pub fn install_wide_grid_image(user_dir: &SteamUserDir, app_id: u32, image_data: &[u8]) -> Result<(), String> {
+	let dir = grid_dir(user_dir);
+	std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create grid dir: {e}"))?;
+
+	// Determine the extension from the image bytes magic number.
+	let ext = image_extension(image_data);
+	let path = dir.join(format!("{app_id}.{ext}"));
+	std::fs::write(&path, image_data).map_err(|e| format!("Failed to write wide grid image: {e}"))?;
+	Ok(())
+}
+
+/// Install a hero image (1920x620) for a shortcut.
+///
+/// Writes to `{app_id}_hero.png` which Steam uses for the detail page background.
+pub fn install_hero_image(user_dir: &SteamUserDir, app_id: u32, image_data: &[u8]) -> Result<(), String> {
+	let dir = grid_dir(user_dir);
+	std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create grid dir: {e}"))?;
+
+	let ext = image_extension(image_data);
+	let path = dir.join(format!("{app_id}_hero.{ext}"));
+	std::fs::write(&path, image_data).map_err(|e| format!("Failed to write hero image: {e}"))?;
+	Ok(())
+}
+
+/// Guess a file extension from the magic bytes of an image.
+fn image_extension(data: &[u8]) -> &'static str {
+	if data.starts_with(b"\xff\xd8\xff") {
+		"jpg"
+	} else {
+		"png"
+	}
+}
+
 /// Remove all grid images associated with a given app_id.
 pub fn remove_grid_images(user_dir: &SteamUserDir, app_id: u32) -> Result<(), String> {
 	let dir = grid_dir(user_dir);

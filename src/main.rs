@@ -1,6 +1,7 @@
 mod boxart;
 mod moonlight;
 mod steam;
+mod steamgriddb;
 
 use clap::{Parser, Subcommand};
 use std::{path::PathBuf, process::Command};
@@ -20,6 +21,15 @@ struct Cli {
 	/// Use Flatpak Moonlight (com.moonlight_stream.Moonlight).
 	#[clap(long, global = true)]
 	flatpak: bool,
+
+	/// SteamGridDB API key for fetching wide grid and hero images.
+	/// Register at https://www.steamgriddb.com/profile/preferences/api
+	#[clap(long, global = true)]
+	steamgriddb_key: Option<String>,
+
+	/// Do not add a "Sync Moonlight Shortcuts" shortcut to Steam.
+	#[clap(long, global = true)]
+	no_sync_shortcut: bool,
 
 	/// Enable verbose output.
 	#[clap(short, long, global = true)]
@@ -82,6 +92,8 @@ fn main() -> Result<(), String> {
 			cli.steam_userdata.as_deref(),
 			dry_run,
 			no_overlay,
+			cli.steamgriddb_key.as_deref(),
+			cli.no_sync_shortcut,
 			cli.verbose,
 		),
 		Commands::Remove { dry_run } => cmd_remove(cli.steam_userdata.as_deref(), dry_run, cli.verbose),
@@ -103,6 +115,8 @@ fn cmd_sync(
 	steam_userdata: Option<&std::path::Path>,
 	dry_run: bool,
 	no_overlay: bool,
+	steamgriddb_key: Option<&str>,
+	no_sync_shortcut: bool,
 	verbose: bool,
 ) -> Result<(), String> {
 	// If no hosts specified, auto-discover from Moonlight's config.
@@ -165,10 +179,15 @@ fn cmd_sync(
 		.to_string();
 
 	// Build set of desired launch_options for identity matching.
-	let desired_launch_opts: std::collections::HashSet<String> = desired
+	let mut desired_launch_opts: std::collections::HashSet<String> = desired
 		.iter()
 		.map(|(host, app)| build_launch_options(backend, steam_userdata, host, &app.name))
 		.collect();
+
+	// Always keep the sync shortcut if present.
+	if !no_sync_shortcut {
+		desired_launch_opts.insert(build_sync_launch_options(backend, steam_userdata));
+	}
 
 	// Find stale moonlight shortcuts (not in desired set).
 	let stale: Vec<_> = moonlight_existing
@@ -207,7 +226,7 @@ fn cmd_sync(
 			s
 		};
 
-		// Install grid image (boxart may have changed).
+		// Install portrait boxart (from Moonlight's local cache).
 		if !dry_run {
 			match boxart::process_boxart(app.boxart_path.as_deref(), no_overlay) {
 				Ok(Some(data)) => {
@@ -216,9 +235,51 @@ fn cmd_sync(
 				Ok(None) => {},
 				Err(e) => eprintln!("Warning: boxart processing failed for '{}': {e}", app.name),
 			}
+
+			// Fetch wide grid and hero images from SteamGridDB if an API key was provided.
+			if let Some(key) = steamgriddb_key {
+				match steamgriddb::fetch_wide_grid(&app.name, key) {
+					Ok(Some(data)) => {
+						if let Err(e) = steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
+							eprintln!("Warning: failed to install wide grid for '{}': {e}", app.name);
+						}
+					},
+					Ok(None) => {
+						if verbose {
+							eprintln!("No wide grid found on SteamGridDB for '{}'", app.name);
+						}
+					},
+					Err(e) => eprintln!("Warning: SteamGridDB wide grid fetch failed for '{}': {e}", app.name),
+				}
+				match steamgriddb::fetch_hero(&app.name, key) {
+					Ok(Some(data)) => {
+						if let Err(e) = steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
+							eprintln!("Warning: failed to install hero image for '{}': {e}", app.name);
+						}
+					},
+					Ok(None) => {},
+					Err(e) => eprintln!("Warning: SteamGridDB hero fetch failed for '{}': {e}", app.name),
+				}
+			}
 		}
 
 		new_shortcuts.push(shortcut);
+	}
+
+	// Create or update the sync shortcut.
+	if !no_sync_shortcut {
+		let sync_opts = build_sync_launch_options(backend, steam_userdata);
+		let sync_shortcut = moonlight_existing
+			.iter()
+			.find(|s| s.launch_options == sync_opts)
+			.cloned()
+			.unwrap_or_else(|| {
+				let mut s =
+					Shortcut::new("", "Sync Moonlight Shortcuts", &self_path, "", "", "", &sync_opts).to_owned();
+				s.tags.push("moonlight".to_string());
+				s
+			});
+		new_shortcuts.push(sync_shortcut);
 	}
 
 	if dry_run {
@@ -305,7 +366,7 @@ fn cmd_launch(
 			ForkResult::Child => {
 				// Child process: run sync silently, then exit.
 				let hosts = vec![host.to_string()];
-				let _ = cmd_sync(backend, &hosts, steam_userdata, false, false, verbose);
+				let _ = cmd_sync(backend, &hosts, steam_userdata, false, false, None, true, verbose);
 				std::process::exit(0);
 			},
 			ForkResult::Parent => {
@@ -321,6 +382,19 @@ fn cmd_launch(
 	let mut cmd = moonlight::stream_command(backend, host, app);
 	let err = exec_command(&mut cmd);
 	Err(format!("Failed to exec Moonlight: {err}"))
+}
+
+/// Build the launch_options string for the self-sync shortcut.
+fn build_sync_launch_options(
+	backend: &moonlight::MoonlightBackend,
+	steam_userdata: Option<&std::path::Path>,
+) -> String {
+	let mut parts = vec!["sync".to_string()];
+	parts.push(backend.launch_flags());
+	if let Some(path) = steam_userdata {
+		parts.push(format!("-s {}", path.display()));
+	}
+	parts.join(" ")
 }
 
 /// Build the launch_options string for a shortcut.

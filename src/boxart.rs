@@ -1,7 +1,7 @@
 use image::{imageops, DynamicImage, GenericImageView, ImageFormat, RgbaImage};
 use std::{io::Cursor, path::Path};
 
-const MOONLIGHT_LOGO: &[u8] = include_bytes!("assets/moonlight_logo.png");
+const MOONLIGHT_LOGO: &[u8] = include_bytes!("../assets/moonlight_logo.png");
 
 /// Load a boxart image from a local file path.
 pub fn load_boxart(path: &Path) -> Result<DynamicImage, String> {
