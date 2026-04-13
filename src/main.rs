@@ -7,6 +7,14 @@ use clap::{Parser, Subcommand};
 use std::{io::Write, path::PathBuf, process::Command};
 use steam_shortcuts_util::Shortcut;
 
+struct SyncOptions<'a> {
+	dry_run: bool,
+	no_overlay: bool,
+	steamgriddb_key: Option<&'a str>,
+	no_sync_shortcut: bool,
+	verbose: bool,
+}
+
 #[derive(Parser)]
 #[clap(version)]
 struct Cli {
@@ -90,11 +98,13 @@ fn main() -> Result<(), String> {
 			&backend,
 			&hosts,
 			cli.steam_userdata.as_deref(),
-			dry_run,
-			no_overlay,
-			cli.steamgriddb_key.as_deref(),
-			cli.no_sync_shortcut,
-			cli.verbose,
+			&SyncOptions {
+				dry_run,
+				no_overlay,
+				steamgriddb_key: cli.steamgriddb_key.as_deref(),
+				no_sync_shortcut: cli.no_sync_shortcut,
+				verbose: cli.verbose,
+			},
 		),
 		Commands::Remove { dry_run } => cmd_remove(cli.steam_userdata.as_deref(), dry_run, cli.verbose),
 		Commands::List => cmd_list(cli.steam_userdata.as_deref()),
@@ -104,6 +114,7 @@ fn main() -> Result<(), String> {
 			&app,
 			no_sync,
 			cli.steam_userdata.as_deref(),
+			cli.steamgriddb_key.as_deref(),
 			cli.verbose,
 		),
 	}
@@ -113,11 +124,7 @@ fn cmd_sync(
 	backend: &moonlight::MoonlightBackend,
 	hosts: &[String],
 	steam_userdata: Option<&std::path::Path>,
-	dry_run: bool,
-	no_overlay: bool,
-	steamgriddb_key: Option<&str>,
-	no_sync_shortcut: bool,
-	verbose: bool,
+	opts: &SyncOptions,
 ) -> Result<(), String> {
 	// If no hosts specified, auto-discover from Moonlight's config.
 	let hosts: Vec<String> = if hosts.is_empty() {
@@ -181,12 +188,12 @@ fn cmd_sync(
 	// Build set of desired launch_options for identity matching.
 	let mut desired_launch_opts: std::collections::HashSet<String> = desired
 		.iter()
-		.map(|(host, app)| build_launch_options(backend, steam_userdata, host, &app.name))
+		.map(|(host, app)| build_launch_options(backend, steam_userdata, opts.steamgriddb_key, host, &app.name))
 		.collect();
 
 	// Always keep the sync shortcut if present.
-	if !no_sync_shortcut {
-		desired_launch_opts.insert(build_sync_launch_options(backend, steam_userdata));
+	if !opts.no_sync_shortcut {
+		desired_launch_opts.insert(build_sync_launch_options(backend, steam_userdata, opts.steamgriddb_key));
 	}
 
 	// Find stale moonlight shortcuts (not in desired set).
@@ -198,10 +205,10 @@ fn cmd_sync(
 	if !stale.is_empty() {
 		println!("Removing {} stale shortcuts.", stale.len());
 		for s in &stale {
-			if verbose {
+			if opts.verbose {
 				println!("  - {}", s.app_name);
 			}
-			if !dry_run {
+			if !opts.dry_run {
 				steam::remove_grid_images(&user_dir, s.app_id)?;
 			}
 		}
@@ -209,11 +216,12 @@ fn cmd_sync(
 
 	// Build new shortcut list.
 	let mut new_shortcuts = Vec::new();
-	if steamgriddb_key.is_some() && !dry_run {
+	if opts.steamgriddb_key.is_some() && !opts.dry_run {
 		println!("Fetching SteamGridDB images for {} app(s)...", desired.len());
 	}
 	for (i, (host, app)) in desired.iter().enumerate() {
-		let launch_options = build_launch_options(backend, steam_userdata, host, &app.name);
+		let launch_options =
+			build_launch_options(backend, steam_userdata, opts.steamgriddb_key, host, &app.name);
 
 		// Check if shortcut already exists.
 		let existing_shortcut = moonlight_existing.iter().find(|s| s.launch_options == launch_options);
@@ -223,15 +231,15 @@ fn cmd_sync(
 		} else {
 			let mut s = Shortcut::new("", &app.name, &self_path, "", "", "", &launch_options).to_owned();
 			s.tags.push("moonlight".to_string());
-			if verbose {
+			if opts.verbose {
 				println!("  + {} (host: {host})", app.name);
 			}
 			s
 		};
 
 		// Install portrait boxart (from Moonlight's local cache).
-		if !dry_run {
-			match boxart::process_boxart(app.boxart_path.as_deref(), no_overlay) {
+		if !opts.dry_run {
+			match boxart::process_boxart(app.boxart_path.as_deref(), opts.no_overlay) {
 				Ok(Some(data)) => {
 					steam::install_grid_image(&user_dir, shortcut.app_id, &data)?;
 				},
@@ -240,7 +248,7 @@ fn cmd_sync(
 			}
 
 			// Fetch wide grid and hero images from SteamGridDB if an API key was provided.
-			if let Some(key) = steamgriddb_key {
+			if let Some(key) = opts.steamgriddb_key {
 				print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
 				let _ = std::io::stdout().flush();
 
@@ -274,8 +282,8 @@ fn cmd_sync(
 	}
 
 	// Create or update the sync shortcut.
-	if !no_sync_shortcut {
-		let sync_opts = build_sync_launch_options(backend, steam_userdata);
+	if !opts.no_sync_shortcut {
+		let sync_opts = build_sync_launch_options(backend, steam_userdata, opts.steamgriddb_key);
 		let sync_shortcut = moonlight_existing
 			.iter()
 			.find(|s| s.launch_options == sync_opts)
@@ -289,7 +297,7 @@ fn cmd_sync(
 		new_shortcuts.push(sync_shortcut);
 	}
 
-	if dry_run {
+	if opts.dry_run {
 		println!(
 			"Dry run: would write {} shortcuts ({} moonlight).",
 			non_moonlight.len() + new_shortcuts.len(),
@@ -365,6 +373,7 @@ fn cmd_launch(
 	app: &str,
 	no_sync: bool,
 	steam_userdata: Option<&std::path::Path>,
+	steamgriddb_key: Option<&str>,
 	verbose: bool,
 ) -> Result<(), String> {
 	// Fork a background sync if enabled.
@@ -373,7 +382,18 @@ fn cmd_launch(
 			ForkResult::Child => {
 				// Child process: run sync silently, then exit.
 				let hosts = vec![host.to_string()];
-				let _ = cmd_sync(backend, &hosts, steam_userdata, false, false, None, true, verbose);
+				let _ = cmd_sync(
+					backend,
+					&hosts,
+					steam_userdata,
+					&SyncOptions {
+						dry_run: false,
+						no_overlay: false,
+						steamgriddb_key,
+						no_sync_shortcut: true,
+						verbose,
+					},
+				);
 				std::process::exit(0);
 			},
 			ForkResult::Parent => {
@@ -395,11 +415,15 @@ fn cmd_launch(
 fn build_sync_launch_options(
 	backend: &moonlight::MoonlightBackend,
 	steam_userdata: Option<&std::path::Path>,
+	steamgriddb_key: Option<&str>,
 ) -> String {
 	let mut parts = vec!["sync".to_string()];
 	parts.push(backend.launch_flags());
 	if let Some(path) = steam_userdata {
 		parts.push(format!("-s {}", path.display()));
+	}
+	if let Some(key) = steamgriddb_key {
+		parts.push(format!("--steamgriddb-key {key}"));
 	}
 	parts.join(" ")
 }
@@ -408,6 +432,7 @@ fn build_sync_launch_options(
 fn build_launch_options(
 	backend: &moonlight::MoonlightBackend,
 	steam_userdata: Option<&std::path::Path>,
+	steamgriddb_key: Option<&str>,
 	host: &str,
 	app_name: &str,
 ) -> String {
@@ -415,6 +440,9 @@ fn build_launch_options(
 	parts.push(backend.launch_flags());
 	if let Some(path) = steam_userdata {
 		parts.push(format!("-s {}", path.display()));
+	}
+	if let Some(key) = steamgriddb_key {
+		parts.push(format!("--steamgriddb-key {key}"));
 	}
 	parts.push(host.to_string());
 	parts.push(format!("\"{}\"", app_name));

@@ -66,7 +66,7 @@ fn search_game(name: &str, api_key: &str) -> Result<Option<u64>, String> {
 	let encoded = urlencoding::encode(name);
 	let url = format!("{BASE_URL}/search/autocomplete/{encoded}");
 
-	let response = match authorized_get(&url, api_key) {
+	let response = match authorized_get(&url, api_key).map_err(|e| *e) {
 		Ok(r) => r,
 		Err(ureq::Error::Status(404, _)) => return Ok(None),
 		Err(e) => return Err(format!("SteamGridDB search request failed: {e}")),
@@ -85,7 +85,7 @@ fn search_game(name: &str, api_key: &str) -> Result<Option<u64>, String> {
 
 /// Fetch the URL of the first image returned by the given SteamGridDB endpoint.
 fn first_image_url(url: &str, api_key: &str) -> Result<Option<String>, String> {
-	let response = match authorized_get(url, api_key) {
+	let response = match authorized_get(url, api_key).map_err(|e| *e) {
 		Ok(r) => r,
 		Err(ureq::Error::Status(404, _)) => return Ok(None),
 		Err(e) => return Err(format!("SteamGridDB image list request failed: {e}")),
@@ -118,6 +118,6 @@ fn download_image(url: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Perform an authorized GET request against SteamGridDB.
-fn authorized_get(url: &str, api_key: &str) -> Result<ureq::Response, ureq::Error> {
-	ureq::get(url).set("Authorization", &format!("Bearer {api_key}")).call()
+fn authorized_get(url: &str, api_key: &str) -> Result<ureq::Response, Box<ureq::Error>> {
+	ureq::get(url).set("Authorization", &format!("Bearer {api_key}")).call().map_err(Box::new)
 }
