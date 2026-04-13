@@ -24,11 +24,12 @@ pub fn apply_overlay(boxart: &DynamicImage) -> Result<Vec<u8>, String> {
 
 	let resized_logo = logo.resize(logo_size, logo_size, imageops::FilterType::Lanczos3);
 
-	let margin_x = (bw as f32 * 0.05) as u32;
-	let margin_y = (bh as f32 * 0.05) as u32;
+	// Use a single margin (30% of the logo size) so the logo is
+	// equidistant from both edges regardless of image aspect ratio.
+	let margin = (logo_size as f32 * 0.3) as u32;
 
 	let mut canvas = boxart.to_rgba8();
-	overlay_rgba(&mut canvas, &resized_logo.to_rgba8(), margin_x, margin_y);
+	overlay_rgba(&mut canvas, &resized_logo.to_rgba8(), margin, margin);
 
 	let mut buf = Cursor::new(Vec::new());
 	canvas
