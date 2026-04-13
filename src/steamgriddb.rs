@@ -119,5 +119,8 @@ fn download_image(url: &str) -> Result<Vec<u8>, String> {
 
 /// Perform an authorized GET request against SteamGridDB.
 fn authorized_get(url: &str, api_key: &str) -> Result<ureq::Response, Box<ureq::Error>> {
-	ureq::get(url).set("Authorization", &format!("Bearer {api_key}")).call().map_err(Box::new)
+	ureq::get(url)
+		.set("Authorization", &format!("Bearer {api_key}"))
+		.call()
+		.map_err(Box::new)
 }

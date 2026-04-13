@@ -220,8 +220,7 @@ fn cmd_sync(
 		println!("Fetching SteamGridDB images for {} app(s)...", desired.len());
 	}
 	for (i, (host, app)) in desired.iter().enumerate() {
-		let launch_options =
-			build_launch_options(backend, steam_userdata, opts.steamgriddb_key, host, &app.name);
+		let launch_options = build_launch_options(backend, steam_userdata, opts.steamgriddb_key, host, &app.name);
 
 		// Check if shortcut already exists.
 		let existing_shortcut = moonlight_existing.iter().find(|s| s.launch_options == launch_options);
