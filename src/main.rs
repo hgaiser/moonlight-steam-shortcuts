@@ -243,7 +243,8 @@ fn cmd_sync(
 			}
 
 			if fetch_images {
-				let need_wide = opts.force_download_images || !steam::wide_grid_image_exists(&user_dir, shortcut.app_id);
+				let need_wide =
+					opts.force_download_images || !steam::wide_grid_image_exists(&user_dir, shortcut.app_id);
 				let need_hero = opts.force_download_images || !steam::hero_image_exists(&user_dir, shortcut.app_id);
 				if need_wide || need_hero {
 					print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
@@ -260,7 +261,11 @@ fn cmd_sync(
 						print!(" wide grid");
 						let _ = std::io::stdout().flush();
 						let wide_data = steam_app_id.and_then(steamcdn::fetch_wide_grid).map(|d| {
-							if opts.no_overlay { d } else { boxart::apply_overlay_to_bytes(d) }
+							if opts.no_overlay {
+								d
+							} else {
+								boxart::apply_overlay_to_bytes(d)
+							}
 						});
 						match wide_data {
 							Some(data) => match steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
@@ -277,7 +282,11 @@ fn cmd_sync(
 						print!(" hero");
 						let _ = std::io::stdout().flush();
 						let hero_data = steam_app_id.and_then(steamcdn::fetch_hero).map(|d| {
-							if opts.no_overlay { d } else { boxart::apply_overlay_to_bytes(d) }
+							if opts.no_overlay {
+								d
+							} else {
+								boxart::apply_overlay_to_bytes(d)
+							}
 						});
 						match hero_data {
 							Some(data) => match steam::install_hero_image(&user_dir, shortcut.app_id, &data) {

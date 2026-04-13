@@ -106,19 +106,25 @@ fn image_extension(data: &[u8]) -> &'static str {
 /// Return true if a portrait (cover) grid image already exists for this app.
 pub fn grid_image_exists(user_dir: &SteamUserDir, app_id: u32) -> bool {
 	let dir = grid_dir(user_dir);
-	["png", "jpg"].iter().any(|ext| dir.join(format!("{app_id}p.{ext}")).exists())
+	["png", "jpg"]
+		.iter()
+		.any(|ext| dir.join(format!("{app_id}p.{ext}")).exists())
 }
 
 /// Return true if a wide (landscape) grid image already exists for this app.
 pub fn wide_grid_image_exists(user_dir: &SteamUserDir, app_id: u32) -> bool {
 	let dir = grid_dir(user_dir);
-	["png", "jpg"].iter().any(|ext| dir.join(format!("{app_id}.{ext}")).exists())
+	["png", "jpg"]
+		.iter()
+		.any(|ext| dir.join(format!("{app_id}.{ext}")).exists())
 }
 
 /// Return true if a hero image already exists for this app.
 pub fn hero_image_exists(user_dir: &SteamUserDir, app_id: u32) -> bool {
 	let dir = grid_dir(user_dir);
-	["png", "jpg"].iter().any(|ext| dir.join(format!("{app_id}_hero.{ext}")).exists())
+	["png", "jpg"]
+		.iter()
+		.any(|ext| dir.join(format!("{app_id}_hero.{ext}")).exists())
 }
 
 /// Remove all grid images associated with a given app_id.
