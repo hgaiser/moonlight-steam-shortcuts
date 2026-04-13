@@ -11,6 +11,7 @@ use steam_shortcuts_util::Shortcut;
 struct SyncOptions {
 	dry_run: bool,
 	no_overlay: bool,
+	force_download_images: bool,
 	no_sync_shortcut: bool,
 	verbose: bool,
 }
@@ -57,6 +58,10 @@ enum Commands {
 		/// Skip adding the Moonlight logo overlay to boxart.
 		#[clap(long)]
 		no_overlay: bool,
+
+		/// Re-download and overwrite grid/hero images even if they already exist.
+		#[clap(long)]
+		force_download_images: bool,
 	},
 	/// Remove all Moonlight-managed shortcuts and grid images.
 	Remove {
@@ -89,9 +94,11 @@ fn main() -> Result<(), String> {
 			hosts,
 			dry_run,
 			no_overlay,
+			force_download_images,
 		} => cmd_sync(&backend, &hosts, cli.steam_userdata.as_deref(), &SyncOptions {
 			dry_run,
 			no_overlay,
+			force_download_images,
 			no_sync_shortcut: cli.no_sync_shortcut,
 			verbose: cli.verbose,
 		}),
@@ -226,7 +233,7 @@ fn cmd_sync(
 		};
 
 		// Install portrait boxart (from Moonlight's local cache).
-		if !opts.dry_run {
+		if !opts.dry_run && (opts.force_download_images || !steam::grid_image_exists(&user_dir, shortcut.app_id)) {
 			match boxart::process_boxart(app.boxart_path.as_deref(), opts.no_overlay) {
 				Ok(Some(data)) => {
 					steam::install_grid_image(&user_dir, shortcut.app_id, &data)?;
@@ -236,36 +243,54 @@ fn cmd_sync(
 			}
 
 			if fetch_images {
-				print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
-				let _ = std::io::stdout().flush();
+				let need_wide = opts.force_download_images || !steam::wide_grid_image_exists(&user_dir, shortcut.app_id);
+				let need_hero = opts.force_download_images || !steam::hero_image_exists(&user_dir, shortcut.app_id);
+				if need_wide || need_hero {
+					print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
+					let _ = std::io::stdout().flush();
 
-				let steam_app_id = steamstore::find_app_id(&app.name);
+					let steam_app_id = if need_wide || need_hero {
+						steamstore::find_app_id(&app.name)
+					} else {
+						None
+					};
 
-				// Wide grid.
-				print!(" wide grid");
-				let _ = std::io::stdout().flush();
-				let wide_data = steam_app_id.and_then(steamcdn::fetch_wide_grid);
-				match wide_data {
-					Some(data) => match steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
-						Ok(()) => print!(" ok,"),
-						Err(e) => print!(" install failed ({e}),"),
-					},
-					None => print!(" not found,"),
+					// Wide grid.
+					if need_wide {
+						print!(" wide grid");
+						let _ = std::io::stdout().flush();
+						let wide_data = steam_app_id.and_then(steamcdn::fetch_wide_grid).map(|d| {
+							if opts.no_overlay { d } else { boxart::apply_overlay_to_bytes(d) }
+						});
+						match wide_data {
+							Some(data) => match steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
+								Ok(()) => print!(" ok,"),
+								Err(e) => print!(" install failed ({e}),"),
+							},
+							None => print!(" not found,"),
+						}
+						let _ = std::io::stdout().flush();
+					}
+
+					// Hero image.
+					if need_hero {
+						print!(" hero");
+						let _ = std::io::stdout().flush();
+						let hero_data = steam_app_id.and_then(steamcdn::fetch_hero).map(|d| {
+							if opts.no_overlay { d } else { boxart::apply_overlay_to_bytes(d) }
+						});
+						match hero_data {
+							Some(data) => match steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
+								Ok(()) => print!(" ok"),
+								Err(e) => print!(" install failed ({e})"),
+							},
+							None => print!(" not found"),
+						}
+						let _ = std::io::stdout().flush();
+					}
+
+					println!();
 				}
-				let _ = std::io::stdout().flush();
-
-				// Hero image.
-				print!(" hero");
-				let _ = std::io::stdout().flush();
-				let hero_data = steam_app_id.and_then(steamcdn::fetch_hero);
-				match hero_data {
-					Some(data) => match steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
-						Ok(()) => print!(" ok"),
-						Err(e) => print!(" install failed ({e})"),
-					},
-					None => print!(" not found"),
-				}
-				println!();
 			}
 		}
 
@@ -375,6 +400,7 @@ fn cmd_launch(
 				let _ = cmd_sync(backend, &hosts, steam_userdata, &SyncOptions {
 					dry_run: false,
 					no_overlay: false,
+					force_download_images: false,
 					no_sync_shortcut: true,
 					verbose,
 				});

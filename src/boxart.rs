@@ -11,7 +11,7 @@ pub fn load_boxart(path: &Path) -> Result<DynamicImage, String> {
 	image::open(path).map_err(|e| format!("Failed to load boxart '{}': {e}", path.display()))
 }
 
-/// Composite the Moonlight logo overlay onto the bottom-right corner of the boxart.
+/// Composite the Moonlight logo overlay onto the top-left corner of an image.
 ///
 /// Returns the composited image as PNG bytes.
 pub fn apply_overlay(boxart: &DynamicImage) -> Result<Vec<u8>, String> {
@@ -23,15 +23,12 @@ pub fn apply_overlay(boxart: &DynamicImage) -> Result<Vec<u8>, String> {
 	let logo_size = (shorter as f32 * 0.15).max(16.0) as u32;
 
 	let resized_logo = logo.resize(logo_size, logo_size, imageops::FilterType::Lanczos3);
-	let (lw, lh) = resized_logo.dimensions();
 
 	let margin_x = (bw as f32 * 0.05) as u32;
 	let margin_y = (bh as f32 * 0.05) as u32;
-	let x = bw.saturating_sub(lw + margin_x);
-	let y = bh.saturating_sub(lh + margin_y);
 
 	let mut canvas = boxart.to_rgba8();
-	overlay_rgba(&mut canvas, &resized_logo.to_rgba8(), x, y);
+	overlay_rgba(&mut canvas, &resized_logo.to_rgba8(), margin_x, margin_y);
 
 	let mut buf = Cursor::new(Vec::new());
 	canvas
@@ -39,6 +36,26 @@ pub fn apply_overlay(boxart: &DynamicImage) -> Result<Vec<u8>, String> {
 		.map_err(|e| format!("Failed to encode composited image: {e}"))?;
 
 	Ok(buf.into_inner())
+}
+
+/// Decode raw image bytes, apply the Moonlight logo overlay to the top-left, and return PNG bytes.
+///
+/// Returns the original bytes unchanged (and logs a warning) if decoding or compositing fails.
+pub fn apply_overlay_to_bytes(data: Vec<u8>) -> Vec<u8> {
+	let img = match image::load_from_memory(&data) {
+		Ok(img) => img,
+		Err(e) => {
+			eprintln!("Warning: could not decode image for overlay: {e}");
+			return data;
+		},
+	};
+	match apply_overlay(&img) {
+		Ok(result) => result,
+		Err(e) => {
+			eprintln!("Warning: overlay failed: {e}");
+			data
+		},
+	}
 }
 
 /// Load boxart from path, apply overlay, and return PNG bytes.
