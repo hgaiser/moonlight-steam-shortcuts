@@ -138,7 +138,6 @@ pub fn list_apps(backend: &MoonlightBackend, host: &str) -> Result<Vec<Moonlight
 	Ok(apps)
 }
 
-/// Build a `Command` that will stream the given app.
 pub fn stream_command(backend: &MoonlightBackend, host: &str, app: &str) -> Command {
 	backend.command(&["stream", host, app])
 }

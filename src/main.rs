@@ -1,16 +1,16 @@
 mod boxart;
 mod moonlight;
 mod steam;
-mod steamgriddb;
+mod steamcdn;
+mod steamstore;
 
 use clap::{Parser, Subcommand};
 use std::{io::Write, path::PathBuf, process::Command};
 use steam_shortcuts_util::Shortcut;
 
-struct SyncOptions<'a> {
+struct SyncOptions {
 	dry_run: bool,
 	no_overlay: bool,
-	steamgriddb_key: Option<&'a str>,
 	no_sync_shortcut: bool,
 	verbose: bool,
 }
@@ -29,11 +29,6 @@ struct Cli {
 	/// Use Flatpak Moonlight (com.moonlight_stream.Moonlight).
 	#[clap(long, global = true)]
 	flatpak: bool,
-
-	/// SteamGridDB API key for fetching wide grid and hero images.
-	/// Register at https://www.steamgriddb.com/profile/preferences/api
-	#[clap(long, global = true)]
-	steamgriddb_key: Option<String>,
 
 	/// Do not add a "Sync Moonlight Shortcuts" shortcut to Steam.
 	#[clap(long, global = true)]
@@ -101,7 +96,6 @@ fn main() -> Result<(), String> {
 			&SyncOptions {
 				dry_run,
 				no_overlay,
-				steamgriddb_key: cli.steamgriddb_key.as_deref(),
 				no_sync_shortcut: cli.no_sync_shortcut,
 				verbose: cli.verbose,
 			},
@@ -114,7 +108,6 @@ fn main() -> Result<(), String> {
 			&app,
 			no_sync,
 			cli.steam_userdata.as_deref(),
-			cli.steamgriddb_key.as_deref(),
 			cli.verbose,
 		),
 	}
@@ -188,12 +181,12 @@ fn cmd_sync(
 	// Build set of desired launch_options for identity matching.
 	let mut desired_launch_opts: std::collections::HashSet<String> = desired
 		.iter()
-		.map(|(host, app)| build_launch_options(backend, steam_userdata, opts.steamgriddb_key, host, &app.name))
+		.map(|(host, app)| build_launch_options(backend, steam_userdata, host, &app.name))
 		.collect();
 
 	// Always keep the sync shortcut if present.
 	if !opts.no_sync_shortcut {
-		desired_launch_opts.insert(build_sync_launch_options(backend, steam_userdata, opts.steamgriddb_key));
+		desired_launch_opts.insert(build_sync_launch_options(backend, steam_userdata));
 	}
 
 	// Find stale moonlight shortcuts (not in desired set).
@@ -215,12 +208,13 @@ fn cmd_sync(
 	}
 
 	// Build new shortcut list.
+	let fetch_images = !opts.dry_run;
 	let mut new_shortcuts = Vec::new();
-	if opts.steamgriddb_key.is_some() && !opts.dry_run {
-		println!("Fetching SteamGridDB images for {} app(s)...", desired.len());
+	if fetch_images {
+		println!("Fetching grid/hero images for {} app(s)...", desired.len());
 	}
 	for (i, (host, app)) in desired.iter().enumerate() {
-		let launch_options = build_launch_options(backend, steam_userdata, opts.steamgriddb_key, host, &app.name);
+		let launch_options = build_launch_options(backend, steam_userdata, host, &app.name);
 
 		// Check if shortcut already exists.
 		let existing_shortcut = moonlight_existing.iter().find(|s| s.launch_options == launch_options);
@@ -246,32 +240,35 @@ fn cmd_sync(
 				Err(e) => eprintln!("Warning: boxart processing failed for '{}': {e}", app.name),
 			}
 
-			// Fetch wide grid and hero images from SteamGridDB if an API key was provided.
-			if let Some(key) = opts.steamgriddb_key {
+			if fetch_images {
 				print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
 				let _ = std::io::stdout().flush();
 
+				let steam_app_id = steamstore::find_app_id(&app.name);
+
+				// Wide grid.
 				print!(" wide grid");
 				let _ = std::io::stdout().flush();
-				match steamgriddb::fetch_wide_grid(&app.name, key) {
-					Ok(Some(data)) => match steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
+				let wide_data = steam_app_id.and_then(steamcdn::fetch_wide_grid);
+				match wide_data {
+					Some(data) => match steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
 						Ok(()) => print!(" ok,"),
 						Err(e) => print!(" install failed ({e}),"),
 					},
-					Ok(None) => print!(" not found,"),
-					Err(e) => print!(" error ({e}),"),
+					None => print!(" not found,"),
 				}
 				let _ = std::io::stdout().flush();
 
+				// Hero image.
 				print!(" hero");
 				let _ = std::io::stdout().flush();
-				match steamgriddb::fetch_hero(&app.name, key) {
-					Ok(Some(data)) => match steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
+				let hero_data = steam_app_id.and_then(steamcdn::fetch_hero);
+				match hero_data {
+					Some(data) => match steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
 						Ok(()) => print!(" ok"),
 						Err(e) => print!(" install failed ({e})"),
 					},
-					Ok(None) => print!(" not found"),
-					Err(e) => print!(" error ({e})"),
+					None => print!(" not found"),
 				}
 				println!();
 			}
@@ -282,7 +279,7 @@ fn cmd_sync(
 
 	// Create or update the sync shortcut.
 	if !opts.no_sync_shortcut {
-		let sync_opts = build_sync_launch_options(backend, steam_userdata, opts.steamgriddb_key);
+		let sync_opts = build_sync_launch_options(backend, steam_userdata);
 		let sync_shortcut = moonlight_existing
 			.iter()
 			.find(|s| s.launch_options == sync_opts)
@@ -372,7 +369,6 @@ fn cmd_launch(
 	app: &str,
 	no_sync: bool,
 	steam_userdata: Option<&std::path::Path>,
-	steamgriddb_key: Option<&str>,
 	verbose: bool,
 ) -> Result<(), String> {
 	// Fork a background sync if enabled.
@@ -388,7 +384,6 @@ fn cmd_launch(
 					&SyncOptions {
 						dry_run: false,
 						no_overlay: false,
-						steamgriddb_key,
 						no_sync_shortcut: true,
 						verbose,
 					},
@@ -414,15 +409,11 @@ fn cmd_launch(
 fn build_sync_launch_options(
 	backend: &moonlight::MoonlightBackend,
 	steam_userdata: Option<&std::path::Path>,
-	steamgriddb_key: Option<&str>,
 ) -> String {
 	let mut parts = vec!["sync".to_string()];
 	parts.push(backend.launch_flags());
 	if let Some(path) = steam_userdata {
 		parts.push(format!("-s {}", path.display()));
-	}
-	if let Some(key) = steamgriddb_key {
-		parts.push(format!("--steamgriddb-key {key}"));
 	}
 	parts.join(" ")
 }
@@ -431,7 +422,6 @@ fn build_sync_launch_options(
 fn build_launch_options(
 	backend: &moonlight::MoonlightBackend,
 	steam_userdata: Option<&std::path::Path>,
-	steamgriddb_key: Option<&str>,
 	host: &str,
 	app_name: &str,
 ) -> String {
@@ -439,9 +429,6 @@ fn build_launch_options(
 	parts.push(backend.launch_flags());
 	if let Some(path) = steam_userdata {
 		parts.push(format!("-s {}", path.display()));
-	}
-	if let Some(key) = steamgriddb_key {
-		parts.push(format!("--steamgriddb-key {key}"));
 	}
 	parts.push(host.to_string());
 	parts.push(format!("\"{}\"", app_name));
