@@ -25,7 +25,7 @@ struct Image {
 	url: String,
 }
 
-/// Fetch the first matching wide grid image (920x430) from SteamGridDB for the given game name.
+/// Fetch the first matching wide grid image from SteamGridDB for the given game name.
 ///
 /// Returns the raw image bytes (JPEG or PNG), or `None` if no match was found.
 pub fn fetch_wide_grid(game_name: &str, api_key: &str) -> Result<Option<Vec<u8>>, String> {
@@ -34,7 +34,7 @@ pub fn fetch_wide_grid(game_name: &str, api_key: &str) -> Result<Option<Vec<u8>>
 		None => return Ok(None),
 	};
 
-	let url = format!("{BASE_URL}/grids/game/{game_id}?dimensions=920x430");
+	let url = format!("{BASE_URL}/grids/game/{game_id}?styles=alternate");
 	let image_url = match first_image_url(&url, api_key)? {
 		Some(u) => u,
 		None => return Ok(None),
@@ -43,7 +43,7 @@ pub fn fetch_wide_grid(game_name: &str, api_key: &str) -> Result<Option<Vec<u8>>
 	download_image(&image_url).map(Some)
 }
 
-/// Fetch the first available hero image (1920x620) from SteamGridDB for the given game name.
+/// Fetch the first available hero image from SteamGridDB for the given game name.
 ///
 /// Returns the raw image bytes, or `None` if no match was found.
 pub fn fetch_hero(game_name: &str, api_key: &str) -> Result<Option<Vec<u8>>, String> {
@@ -52,7 +52,7 @@ pub fn fetch_hero(game_name: &str, api_key: &str) -> Result<Option<Vec<u8>>, Str
 		None => return Ok(None),
 	};
 
-	let url = format!("{BASE_URL}/heroes/game/{game_id}?dimensions=1920x620");
+	let url = format!("{BASE_URL}/heroes/game/{game_id}");
 	let image_url = match first_image_url(&url, api_key)? {
 		Some(u) => u,
 		None => return Ok(None),
