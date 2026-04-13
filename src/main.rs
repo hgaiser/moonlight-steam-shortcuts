@@ -4,7 +4,7 @@ mod steam;
 mod steamgriddb;
 
 use clap::{Parser, Subcommand};
-use std::{path::PathBuf, process::Command};
+use std::{io::Write, path::PathBuf, process::Command};
 use steam_shortcuts_util::Shortcut;
 
 #[derive(Parser)]
@@ -209,7 +209,10 @@ fn cmd_sync(
 
 	// Build new shortcut list.
 	let mut new_shortcuts = Vec::new();
-	for (host, app) in &desired {
+	if steamgriddb_key.is_some() && !dry_run {
+		println!("Fetching SteamGridDB images for {} app(s)...", desired.len());
+	}
+	for (i, (host, app)) in desired.iter().enumerate() {
 		let launch_options = build_launch_options(backend, steam_userdata, host, &app.name);
 
 		// Check if shortcut already exists.
@@ -238,28 +241,32 @@ fn cmd_sync(
 
 			// Fetch wide grid and hero images from SteamGridDB if an API key was provided.
 			if let Some(key) = steamgriddb_key {
+				print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
+				let _ = std::io::stdout().flush();
+
+				print!(" wide grid");
+				let _ = std::io::stdout().flush();
 				match steamgriddb::fetch_wide_grid(&app.name, key) {
-					Ok(Some(data)) => {
-						if let Err(e) = steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
-							eprintln!("Warning: failed to install wide grid for '{}': {e}", app.name);
-						}
+					Ok(Some(data)) => match steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
+						Ok(()) => print!(" ok,"),
+						Err(e) => print!(" install failed ({e}),"),
 					},
-					Ok(None) => {
-						if verbose {
-							eprintln!("No wide grid found on SteamGridDB for '{}'", app.name);
-						}
-					},
-					Err(e) => eprintln!("Warning: SteamGridDB wide grid fetch failed for '{}': {e}", app.name),
+					Ok(None) => print!(" not found,"),
+					Err(e) => print!(" error ({e}),"),
 				}
+				let _ = std::io::stdout().flush();
+
+				print!(" hero");
+				let _ = std::io::stdout().flush();
 				match steamgriddb::fetch_hero(&app.name, key) {
-					Ok(Some(data)) => {
-						if let Err(e) = steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
-							eprintln!("Warning: failed to install hero image for '{}': {e}", app.name);
-						}
+					Ok(Some(data)) => match steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
+						Ok(()) => print!(" ok"),
+						Err(e) => print!(" install failed ({e})"),
 					},
-					Ok(None) => {},
-					Err(e) => eprintln!("Warning: SteamGridDB hero fetch failed for '{}': {e}", app.name),
+					Ok(None) => print!(" not found"),
+					Err(e) => print!(" error ({e})"),
 				}
+				println!();
 			}
 		}
 
