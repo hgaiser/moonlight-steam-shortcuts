@@ -12,6 +12,8 @@ struct SyncOptions {
 	dry_run: bool,
 	no_overlay: bool,
 	force_download_images: bool,
+	/// App name prefixes (case-insensitive) for which image downloading is skipped.
+	skip_images: Vec<String>,
 	no_sync_shortcut: bool,
 	verbose: bool,
 }
@@ -62,6 +64,11 @@ enum Commands {
 		/// Re-download and overwrite grid/hero images even if they already exist.
 		#[clap(long)]
 		force_download_images: bool,
+
+		/// Skip image downloads for apps whose names start with this prefix (case-insensitive).
+		/// Can be specified multiple times.
+		#[clap(long)]
+		skip_images: Vec<String>,
 	},
 	/// Remove all Moonlight-managed shortcuts and grid images.
 	Remove {
@@ -95,10 +102,12 @@ fn main() -> Result<(), String> {
 			dry_run,
 			no_overlay,
 			force_download_images,
+			skip_images,
 		} => cmd_sync(&backend, &hosts, cli.steam_userdata.as_deref(), &SyncOptions {
 			dry_run,
 			no_overlay,
 			force_download_images,
+			skip_images,
 			no_sync_shortcut: cli.no_sync_shortcut,
 			verbose: cli.verbose,
 		}),
@@ -188,7 +197,7 @@ fn cmd_sync(
 
 	// Always keep the sync shortcut if present.
 	if !opts.no_sync_shortcut {
-		desired_launch_opts.insert(build_sync_launch_options(backend, steam_userdata));
+		desired_launch_opts.insert(build_sync_launch_options(backend, steam_userdata, &opts.skip_images));
 	}
 
 	// Find stale moonlight shortcuts (not in desired set).
@@ -250,10 +259,15 @@ fn cmd_sync(
 					print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
 					let _ = std::io::stdout().flush();
 
-					let steam_app_id = if need_wide || need_hero {
-						steamstore::find_app_id(&app.name)
-					} else {
+					// Skip the store lookup for apps whose names match a user-defined prefix.
+					let skip_images = opts
+						.skip_images
+						.iter()
+						.any(|prefix| app.name.to_lowercase().starts_with(&prefix.to_lowercase()));
+					let steam_app_id = if skip_images {
 						None
+					} else {
+						steamstore::find_app_id(&app.name)
 					};
 
 					// Wide grid.
@@ -308,7 +322,7 @@ fn cmd_sync(
 
 	// Create or update the sync shortcut.
 	if !opts.no_sync_shortcut {
-		let sync_opts = build_sync_launch_options(backend, steam_userdata);
+		let sync_opts = build_sync_launch_options(backend, steam_userdata, &opts.skip_images);
 		let sync_shortcut = moonlight_existing
 			.iter()
 			.find(|s| s.launch_options == sync_opts)
@@ -410,6 +424,7 @@ fn cmd_launch(
 					dry_run: false,
 					no_overlay: false,
 					force_download_images: false,
+					skip_images: Vec::new(),
 					no_sync_shortcut: true,
 					verbose,
 				});
@@ -434,11 +449,15 @@ fn cmd_launch(
 fn build_sync_launch_options(
 	backend: &moonlight::MoonlightBackend,
 	steam_userdata: Option<&std::path::Path>,
+	skip_images: &[String],
 ) -> String {
 	let mut parts = vec!["sync".to_string()];
 	parts.push(backend.launch_flags());
 	if let Some(path) = steam_userdata {
 		parts.push(format!("-s {}", path.display()));
+	}
+	for name in skip_images {
+		parts.push(format!("--skip-images \"{name}\""));
 	}
 	parts.join(" ")
 }
