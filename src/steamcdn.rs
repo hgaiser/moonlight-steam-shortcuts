@@ -13,6 +13,17 @@ pub fn fetch_hero(app_id: u32) -> Option<Vec<u8>> {
 	download_image(&url)
 }
 
+/// Fetch the portrait grid image (library_600x900.jpg, 600x900) for a Steam app from Steam's CDN.
+///
+/// Returns `None` if the app ID is zero or Steam returns a non-200 response.
+pub fn fetch_portrait(app_id: u32) -> Option<Vec<u8>> {
+	if app_id == 0 {
+		return None;
+	}
+	let url = format!("{STEAM_CDN}/{app_id}/library_600x900.jpg");
+	download_image(&url)
+}
+
 /// Fetch the landscape wide grid image (header.jpg, 460x215) for a Steam app from Steam's CDN.
 ///
 /// Returns `None` if the app ID is zero or Steam returns a non-200 response.

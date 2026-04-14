@@ -103,14 +103,19 @@ fn main() -> Result<(), String> {
 			no_overlay,
 			force_download_images,
 			skip_images,
-		} => cmd_sync(&backend, &hosts, cli.steam_userdata.as_deref(), &SyncOptions {
-			dry_run,
-			no_overlay,
-			force_download_images,
-			skip_images,
-			no_sync_shortcut: cli.no_sync_shortcut,
-			verbose: cli.verbose,
-		}),
+		} => cmd_sync(
+			&backend,
+			&hosts,
+			cli.steam_userdata.as_deref(),
+			&SyncOptions {
+				dry_run,
+				no_overlay,
+				force_download_images,
+				skip_images,
+				no_sync_shortcut: cli.no_sync_shortcut,
+				verbose: cli.verbose,
+			},
+		),
 		Commands::Remove { dry_run } => cmd_remove(cli.steam_userdata.as_deref(), dry_run, cli.verbose),
 		Commands::List => cmd_list(cli.steam_userdata.as_deref()),
 		Commands::Launch { host, app, no_sync } => cmd_launch(
@@ -230,10 +235,13 @@ fn cmd_sync(
 		// Check if shortcut already exists.
 		let existing_shortcut = moonlight_existing.iter().find(|s| s.launch_options == launch_options);
 
+		let display_name = format!("{} 🌕", app.name);
 		let shortcut = if let Some(existing) = existing_shortcut {
-			existing.clone()
+			let mut s = existing.clone();
+			s.app_name = display_name.clone();
+			s
 		} else {
-			let mut s = Shortcut::new("", &app.name, &self_path, "", "", "", &launch_options).to_owned();
+			let mut s = Shortcut::new("", &display_name, &self_path, "", "", "", &launch_options).to_owned();
 			s.tags.push("moonlight".to_string());
 			if opts.verbose {
 				println!("  + {} (host: {host})", app.name);
@@ -241,79 +249,94 @@ fn cmd_sync(
 			s
 		};
 
-		// Install portrait boxart (from Moonlight's local cache).
-		if !opts.dry_run && (opts.force_download_images || !steam::grid_image_exists(&user_dir, shortcut.app_id)) {
-			match boxart::process_boxart(app.boxart_path.as_deref(), opts.no_overlay) {
-				Ok(Some(data)) => {
+		// Determine which image slots need updating.
+		let need_portrait =
+			!opts.dry_run && (opts.force_download_images || !steam::grid_image_exists(&user_dir, shortcut.app_id));
+		let need_wide =
+			fetch_images && (opts.force_download_images || !steam::wide_grid_image_exists(&user_dir, shortcut.app_id));
+		let need_hero =
+			fetch_images && (opts.force_download_images || !steam::hero_image_exists(&user_dir, shortcut.app_id));
+
+		if need_portrait || need_wide || need_hero {
+			// Look up Steam app ID once (used for CDN portrait fallback, wide grid, and hero).
+			let skip_images = opts
+				.skip_images
+				.iter()
+				.any(|prefix| app.name.to_lowercase().starts_with(&prefix.to_lowercase()));
+			let steam_app_id = if skip_images || (!need_wide && !need_hero && app.boxart_path.is_some()) {
+				None
+			} else {
+				steamstore::find_app_id(&app.name)
+			};
+
+			// Install portrait boxart: prefer Moonlight's local cache, fall back to Steam CDN.
+			if need_portrait {
+				let portrait_data = match boxart::process_boxart(app.boxart_path.as_deref(), opts.no_overlay) {
+					Ok(Some(data)) => Some(data),
+					Ok(None) => steam_app_id.and_then(steamcdn::fetch_portrait).map(|d| {
+						if opts.no_overlay {
+							d
+						} else {
+							boxart::apply_overlay_to_bytes(d)
+						}
+					}),
+					Err(e) => {
+						eprintln!("Warning: boxart processing failed for '{}': {e}", app.name);
+						None
+					},
+				};
+				if let Some(data) = portrait_data {
 					steam::install_grid_image(&user_dir, shortcut.app_id, &data)?;
-				},
-				Ok(None) => {},
-				Err(e) => eprintln!("Warning: boxart processing failed for '{}': {e}", app.name),
+				}
 			}
 
-			if fetch_images {
-				let need_wide =
-					opts.force_download_images || !steam::wide_grid_image_exists(&user_dir, shortcut.app_id);
-				let need_hero = opts.force_download_images || !steam::hero_image_exists(&user_dir, shortcut.app_id);
-				if need_wide || need_hero {
-					print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
+			if need_wide || need_hero {
+				print!("  [{}/{}] '{}':", i + 1, desired.len(), app.name);
+				let _ = std::io::stdout().flush();
+
+				// Wide grid.
+				if need_wide {
+					print!(" wide grid");
 					let _ = std::io::stdout().flush();
-
-					// Skip the store lookup for apps whose names match a user-defined prefix.
-					let skip_images = opts
-						.skip_images
-						.iter()
-						.any(|prefix| app.name.to_lowercase().starts_with(&prefix.to_lowercase()));
-					let steam_app_id = if skip_images {
-						None
-					} else {
-						steamstore::find_app_id(&app.name)
-					};
-
-					// Wide grid.
-					if need_wide {
-						print!(" wide grid");
-						let _ = std::io::stdout().flush();
-						let wide_data = steam_app_id.and_then(steamcdn::fetch_wide_grid).map(|d| {
-							if opts.no_overlay {
-								d
-							} else {
-								boxart::apply_overlay_to_bytes(d)
-							}
-						});
-						match wide_data {
-							Some(data) => match steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
-								Ok(()) => print!(" ok,"),
-								Err(e) => print!(" install failed ({e}),"),
-							},
-							None => print!(" not found,"),
+					let wide_data = steam_app_id.and_then(steamcdn::fetch_wide_grid).map(|d| {
+						if opts.no_overlay {
+							d
+						} else {
+							boxart::apply_overlay_to_bytes(d)
 						}
-						let _ = std::io::stdout().flush();
+					});
+					match wide_data {
+						Some(data) => match steam::install_wide_grid_image(&user_dir, shortcut.app_id, &data) {
+							Ok(()) => print!(" ok,"),
+							Err(e) => print!(" install failed ({e}),"),
+						},
+						None => print!(" not found,"),
 					}
-
-					// Hero image.
-					if need_hero {
-						print!(" hero");
-						let _ = std::io::stdout().flush();
-						let hero_data = steam_app_id.and_then(steamcdn::fetch_hero).map(|d| {
-							if opts.no_overlay {
-								d
-							} else {
-								boxart::apply_overlay_to_bytes(d)
-							}
-						});
-						match hero_data {
-							Some(data) => match steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
-								Ok(()) => print!(" ok"),
-								Err(e) => print!(" install failed ({e})"),
-							},
-							None => print!(" not found"),
-						}
-						let _ = std::io::stdout().flush();
-					}
-
-					println!();
+					let _ = std::io::stdout().flush();
 				}
+
+				// Hero image.
+				if need_hero {
+					print!(" hero");
+					let _ = std::io::stdout().flush();
+					let hero_data = steam_app_id.and_then(steamcdn::fetch_hero).map(|d| {
+						if opts.no_overlay {
+							d
+						} else {
+							boxart::apply_overlay_to_bytes(d)
+						}
+					});
+					match hero_data {
+						Some(data) => match steam::install_hero_image(&user_dir, shortcut.app_id, &data) {
+							Ok(()) => print!(" ok"),
+							Err(e) => print!(" install failed ({e})"),
+						},
+						None => print!(" not found"),
+					}
+					let _ = std::io::stdout().flush();
+				}
+
+				println!();
 			}
 		}
 
@@ -329,7 +352,7 @@ fn cmd_sync(
 			.cloned()
 			.unwrap_or_else(|| {
 				let mut s =
-					Shortcut::new("", "Sync Moonlight Shortcuts", &self_path, "", "", "", &sync_opts).to_owned();
+					Shortcut::new("", "Sync Moonlight Shortcuts 🌕", &self_path, "", "", "", &sync_opts).to_owned();
 				s.tags.push("moonlight".to_string());
 				s
 			});
@@ -420,14 +443,19 @@ fn cmd_launch(
 			ForkResult::Child => {
 				// Child process: run sync silently, then exit.
 				let hosts = vec![host.to_string()];
-				let _ = cmd_sync(backend, &hosts, steam_userdata, &SyncOptions {
-					dry_run: false,
-					no_overlay: false,
-					force_download_images: false,
-					skip_images: Vec::new(),
-					no_sync_shortcut: true,
-					verbose,
-				});
+				let _ = cmd_sync(
+					backend,
+					&hosts,
+					steam_userdata,
+					&SyncOptions {
+						dry_run: false,
+						no_overlay: false,
+						force_download_images: false,
+						skip_images: Vec::new(),
+						no_sync_shortcut: true,
+						verbose,
+					},
+				);
 				std::process::exit(0);
 			},
 			ForkResult::Parent => {
