@@ -103,19 +103,14 @@ fn main() -> Result<(), String> {
 			no_overlay,
 			force_download_images,
 			skip_images,
-		} => cmd_sync(
-			&backend,
-			&hosts,
-			cli.steam_userdata.as_deref(),
-			&SyncOptions {
-				dry_run,
-				no_overlay,
-				force_download_images,
-				skip_images,
-				no_sync_shortcut: cli.no_sync_shortcut,
-				verbose: cli.verbose,
-			},
-		),
+		} => cmd_sync(&backend, &hosts, cli.steam_userdata.as_deref(), &SyncOptions {
+			dry_run,
+			no_overlay,
+			force_download_images,
+			skip_images,
+			no_sync_shortcut: cli.no_sync_shortcut,
+			verbose: cli.verbose,
+		}),
 		Commands::Remove { dry_run } => cmd_remove(cli.steam_userdata.as_deref(), dry_run, cli.verbose),
 		Commands::List => cmd_list(cli.steam_userdata.as_deref()),
 		Commands::Launch { host, app, no_sync } => cmd_launch(
@@ -443,19 +438,14 @@ fn cmd_launch(
 			ForkResult::Child => {
 				// Child process: run sync silently, then exit.
 				let hosts = vec![host.to_string()];
-				let _ = cmd_sync(
-					backend,
-					&hosts,
-					steam_userdata,
-					&SyncOptions {
-						dry_run: false,
-						no_overlay: false,
-						force_download_images: false,
-						skip_images: Vec::new(),
-						no_sync_shortcut: true,
-						verbose,
-					},
-				);
+				let _ = cmd_sync(backend, &hosts, steam_userdata, &SyncOptions {
+					dry_run: false,
+					no_overlay: false,
+					force_download_images: false,
+					skip_images: Vec::new(),
+					no_sync_shortcut: true,
+					verbose,
+				});
 				std::process::exit(0);
 			},
 			ForkResult::Parent => {
