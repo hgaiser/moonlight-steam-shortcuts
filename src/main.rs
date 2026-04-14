@@ -235,7 +235,7 @@ fn cmd_sync(
 		// Check if shortcut already exists.
 		let existing_shortcut = moonlight_existing.iter().find(|s| s.launch_options == launch_options);
 
-		let display_name = format!("{} 🌕", app.name);
+		let display_name = format!("{} 🌙", app.name);
 		let shortcut = if let Some(existing) = existing_shortcut {
 			let mut s = existing.clone();
 			s.app_name = display_name.clone();
@@ -352,7 +352,7 @@ fn cmd_sync(
 			.cloned()
 			.unwrap_or_else(|| {
 				let mut s =
-					Shortcut::new("", "Sync Moonlight Shortcuts 🌕", &self_path, "", "", "", &sync_opts).to_owned();
+					Shortcut::new("", "Sync Moonlight Shortcuts 🌙", &self_path, "", "", "", &sync_opts).to_owned();
 				s.tags.push("moonlight".to_string());
 				s
 			});
