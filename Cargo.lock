@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "moonlight-steam-shortcuts"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "clap",
  "csv",
